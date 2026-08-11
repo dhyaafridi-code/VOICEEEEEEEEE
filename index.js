@@ -3,7 +3,6 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const { joinVoiceChannel, entersState, VoiceConnectionStatus } = require('@discordjs/voice');
 const express = require('express');
 
-// إعداد سيرفر وهمي لفتح بورت والاستجابة لـ Render
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -15,49 +14,21 @@ app.listen(PORT, () => {
     console.log(`Server is listening on port ${PORT}`);
 });
 
-// إعداد البوت
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
-const MY_USER_ID = '851812052628275280';
 
-// لتخزين القناة الحالية التي يتواجد فيها البوت معك
+// ضع هنا آي دي القناة الصوتية الثابتة التي تريد أن يبقى فيها البوت طوال الوقت لتجميع الساعات
+const TARGET_VOICE_CHANNEL_ID = 'ضع_آي_دي_القناة_الصوتية_هنا';
+const TARGET_GUILD_ID = 'ضع_آي_دي_السيرفر_هنا';
+
 let activeConnection = null;
-let currentChannelId = null;
 
-client.on('voiceStateUpdate', async (oldState, newState) => {
-    // التحقق إذا كان الحدث يخصك أنت (حسابك الشخصي)
-    if (newState.member.id === MY_USER_ID || oldState.member.id === MY_USER_ID) {
-        
-        // الحالة الأولى: إذا دخلت إلى قناة صوتية أو انتقلت إليها
-        if (newState.member.id === MY_USER_ID && newState.channelId) {
-            currentChannelId = newState.channelId;
-            if (!activeConnection || activeConnection.joinConfig.channelId !== newState.channelId) {
-                setTimeout(async () => {
-                    await connectToChannel(newState.channelId, newState.guild);
-                }, 500);
-            }
-        } 
-        
-        // الحالة الثانية: إذا خرجت تماماً من الفويس (ولم تقم بالانتقال لقناة أخرى)
-        if (oldState.member.id === MY_USER_ID && oldState.channelId && !newState.channelId) {
-            if (activeConnection) {
-                activeConnection.destroy();
-                activeConnection = null;
-                currentChannelId = null;
-            }
-        }
-    }
-});
-
-// دالة الاتصال بالقناة
-async function connectToChannel(channelId, guild) {
+async function keepConnected() {
     try {
-        // إذا كان هناك اتصال قديم، قم بقطعه أولاً
-        if (activeConnection) {
-            activeConnection.destroy();
-        }
+        const guild = client.guilds.cache.get(TARGET_GUILD_ID);
+        if (!guild) return;
 
         const connection = joinVoiceChannel({
-            channelId: channelId,
+            channelId: TARGET_VOICE_CHANNEL_ID,
             guildId: guild.id,
             adapterCreator: guild.voiceAdapterCreator,
             selfDeaf: true,
@@ -66,7 +37,7 @@ async function connectToChannel(channelId, guild) {
 
         activeConnection = connection;
 
-        // مراقبة حالة الاتصال وإعادة الاتصال إن انقطعت لأسباب تقنية (وليس لأنك خرجت)
+        // إعادة الاتصال فوراً في حال حدوث أي انقطاع
         connection.on(VoiceConnectionStatus.Disconnected, async () => {
             try {
                 await Promise.race([
@@ -75,26 +46,22 @@ async function connectToChannel(channelId, guild) {
                 ]);
             } catch (error) {
                 connection.destroy();
-                activeConnection = null;
-                // يعود فقط إذا كنت لم تخرج أنت أصلاً من القناة
-                if (currentChannelId) {
-                    const targetGuild = client.guilds.cache.get(guild.id);
-                    if (targetGuild) {
-                        setTimeout(() => {
-                            connectToChannel(currentChannelId, targetGuild);
-                        }, 1000);
-                    }
-                }
+                setTimeout(() => {
+                    keepConnected();
+                }, 2000);
             }
         });
-
     } catch (error) {
-        console.log("خطأ أثناء محاولة الانضمام للفويس:", error);
+        console.log("خطأ في الاتصال الدائم:", error);
     }
 }
 
 client.once('ready', () => {
     console.log(`Logged in as ${client.user.tag}!`);
+    // الاتصال بالقناة تلقائياً بمجرد تشغيل البوت
+    setTimeout(() => {
+        keepConnected();
+    }, 3000);
 });
 
 client.login(process.env.DISCORD_TOKEN);
