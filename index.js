@@ -17,8 +17,8 @@ app.listen(PORT, () => {
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
 
 // ضع هنا آي دي القناة الصوتية الثابتة التي تريد أن يبقى فيها البوت طوال الوقت لتجميع الساعات
-const TARGET_VOICE_CHANNEL_ID = 'ضع_آي_دي_القناة_الصوتية_هنا';
-const TARGET_GUILD_ID = 'ضع_آي_دي_السيرفر_هنا';
+const TARGET_VOICE_CHANNEL_ID = '1536632103314399242';
+const TARGET_GUILD_ID = '1533650122448048209';
 
 let activeConnection = null;
 
