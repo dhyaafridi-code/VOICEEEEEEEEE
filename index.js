@@ -1,8 +1,22 @@
 require('dotenv').config();
 const { Client, GatewayIntentBits } = require('discord.js');
 const { joinVoiceChannel } = require('@discordjs/voice');
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
+const express = require('express'); // أضف هذا السطر
 
+// إعداد سيرفر وهمي لفتح بورت والاستجابة لـ Render
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get('/', (req, res) => {
+    res.send('Bot is running!');
+});
+
+app.listen(PORT, () => {
+    console.log(`Server is listening on port ${PORT}`);
+});
+
+// كود البوت الأصلي الخاص بك
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
 const MY_USER_ID = '851812052628275280';
 
 client.on('voiceStateUpdate', (oldState, newState) => {
