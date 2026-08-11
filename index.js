@@ -3,6 +3,7 @@ const { Client, GatewayIntentBits } = require('discord.js');
 const { joinVoiceChannel, entersState, VoiceConnectionStatus } = require('@discordjs/voice');
 const express = require('express');
 
+// إعداد سيرفر وهمي لفتح بورت والاستجابة لـ Render
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -14,21 +15,38 @@ app.listen(PORT, () => {
     console.log(`Server is listening on port ${PORT}`);
 });
 
+// إعداد البوت
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
+const MY_USER_ID = '851812052628275280';
 
-// ضع هنا آي دي القناة الصوتية الثابتة التي تريد أن يبقى فيها البوت طوال الوقت لتجميع الساعات
-const TARGET_VOICE_CHANNEL_ID = '1536632103314399242';
-const TARGET_GUILD_ID = '1533650122448048209';
-
+// لتخزين آخر قناة صوتية دخلت إليها لتتمكن من العودة إليها عند الطرد
+let lastChannelId = null;
+let lastGuildId = null;
 let activeConnection = null;
 
-async function keepConnected() {
-    try {
-        const guild = client.guilds.cache.get(TARGET_GUILD_ID);
-        if (!guild) return;
+client.on('voiceStateUpdate', async (oldState, newState) => {
+    // التحقق أن الحدث يخصك أنت
+    if (newState.member.id === MY_USER_ID) {
+        // إذا دخلت إلى أي قناة صوتية (سواء عادية أو مؤقتة)
+        if (newState.channelId) {
+            lastChannelId = newState.channelId;
+            lastGuildId = newState.guild.id;
 
+            // إذا لم يكن البوت متصلاً أو كان في قناة أخرى، قم بالدخول
+            if (!activeConnection || activeConnection.joinConfig.channelId !== newState.channelId) {
+                setTimeout(async () => {
+                    await connectToChannel(newState.channelId, newState.guild);
+                }, 500);
+            }
+        }
+    }
+});
+
+// دالة الاتصال مع ميزة الثبات وإعادة الدخول التلقائي عند الطرد
+async function connectToChannel(channelId, guild) {
+    try {
         const connection = joinVoiceChannel({
-            channelId: TARGET_VOICE_CHANNEL_ID,
+            channelId: channelId,
             guildId: guild.id,
             adapterCreator: guild.voiceAdapterCreator,
             selfDeaf: true,
@@ -37,7 +55,7 @@ async function keepConnected() {
 
         activeConnection = connection;
 
-        // إعادة الاتصال فوراً في حال حدوث أي انقطاع
+        // مراقبة حالة الاتصال وإعادة الاتصال إن انقطع
         connection.on(VoiceConnectionStatus.Disconnected, async () => {
             try {
                 await Promise.race([
@@ -45,23 +63,27 @@ async function keepConnected() {
                     entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
                 ]);
             } catch (error) {
+                // إذا تم طرد البوت أو قطع الاتصال كلياً، يعود تلقائياً لنفس القناة فوراً
                 connection.destroy();
-                setTimeout(() => {
-                    keepConnected();
-                }, 2000);
+                activeConnection = null;
+                if (lastChannelId && lastGuildId) {
+                    const targetGuild = client.guilds.cache.get(lastGuildId);
+                    if (targetGuild) {
+                        setTimeout(() => {
+                            connectToChannel(lastChannelId, targetGuild);
+                        }, 1000);
+                    }
+                }
             }
         });
+
     } catch (error) {
-        console.log("خطأ في الاتصال الدائم:", error);
+        console.log("خطأ أثناء محاولة الانضمام للفويس:", error);
     }
 }
 
 client.once('ready', () => {
     console.log(`Logged in as ${client.user.tag}!`);
-    // الاتصال بالقناة تلقائياً بمجرد تشغيل البوت
-    setTimeout(() => {
-        keepConnected();
-    }, 3000);
 });
 
 client.login(process.env.DISCORD_TOKEN);
