@@ -19,32 +19,43 @@ app.listen(PORT, () => {
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
 const MY_USER_ID = '851812052628275280';
 
-// لتخزين آخر قناة صوتية دخلت إليها لتتمكن من العودة إليها عند الطرد
-let lastChannelId = null;
-let lastGuildId = null;
+// لتخزين القناة الحالية التي يتواجد فيها البوت معك
 let activeConnection = null;
+let currentChannelId = null;
 
 client.on('voiceStateUpdate', async (oldState, newState) => {
-    // التحقق أن الحدث يخصك أنت
-    if (newState.member.id === MY_USER_ID) {
-        // إذا دخلت إلى أي قناة صوتية (سواء عادية أو مؤقتة)
-        if (newState.channelId) {
-            lastChannelId = newState.channelId;
-            lastGuildId = newState.guild.id;
-
-            // إذا لم يكن البوت متصلاً أو كان في قناة أخرى، قم بالدخول
+    // التحقق إذا كان الحدث يخصك أنت (حسابك الشخصي)
+    if (newState.member.id === MY_USER_ID || oldState.member.id === MY_USER_ID) {
+        
+        // الحالة الأولى: إذا دخلت إلى قناة صوتية أو انتقلت إليها
+        if (newState.member.id === MY_USER_ID && newState.channelId) {
+            currentChannelId = newState.channelId;
             if (!activeConnection || activeConnection.joinConfig.channelId !== newState.channelId) {
                 setTimeout(async () => {
                     await connectToChannel(newState.channelId, newState.guild);
                 }, 500);
             }
+        } 
+        
+        // الحالة الثانية: إذا خرجت تماماً من الفويس (ولم تقم بالانتقال لقناة أخرى)
+        if (oldState.member.id === MY_USER_ID && oldState.channelId && !newState.channelId) {
+            if (activeConnection) {
+                activeConnection.destroy();
+                activeConnection = null;
+                currentChannelId = null;
+            }
         }
     }
 });
 
-// دالة الاتصال مع ميزة الثبات وإعادة الدخول التلقائي عند الطرد
+// دالة الاتصال بالقناة
 async function connectToChannel(channelId, guild) {
     try {
+        // إذا كان هناك اتصال قديم، قم بقطعه أولاً
+        if (activeConnection) {
+            activeConnection.destroy();
+        }
+
         const connection = joinVoiceChannel({
             channelId: channelId,
             guildId: guild.id,
@@ -55,7 +66,7 @@ async function connectToChannel(channelId, guild) {
 
         activeConnection = connection;
 
-        // مراقبة حالة الاتصال وإعادة الاتصال إن انقطع
+        // مراقبة حالة الاتصال وإعادة الاتصال إن انقطعت لأسباب تقنية (وليس لأنك خرجت)
         connection.on(VoiceConnectionStatus.Disconnected, async () => {
             try {
                 await Promise.race([
@@ -63,14 +74,14 @@ async function connectToChannel(channelId, guild) {
                     entersState(connection, VoiceConnectionStatus.Connecting, 5_000),
                 ]);
             } catch (error) {
-                // إذا تم طرد البوت أو قطع الاتصال كلياً، يعود تلقائياً لنفس القناة فوراً
                 connection.destroy();
                 activeConnection = null;
-                if (lastChannelId && lastGuildId) {
-                    const targetGuild = client.guilds.cache.get(lastGuildId);
+                // يعود فقط إذا كنت لم تخرج أنت أصلاً من القناة
+                if (currentChannelId) {
+                    const targetGuild = client.guilds.cache.get(guild.id);
                     if (targetGuild) {
                         setTimeout(() => {
-                            connectToChannel(lastChannelId, targetGuild);
+                            connectToChannel(currentChannelId, targetGuild);
                         }, 1000);
                     }
                 }
