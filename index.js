@@ -8,24 +8,67 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.get('/', (req, res) => {
-    res.send('Bot is running and fully updated!');
+    res.send('Bot with Slash Commands is running!');
 });
 
 app.listen(PORT, () => {
     console.log(`Server is listening on port ${PORT}`);
 });
 
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildVoiceStates] });
 const MY_USER_ID = '851812052628275280';
 
-// متغيرات الحالة للتحكم في البوت
 let lastChannelId = null;
 let lastGuildId = null;
 let activeConnection = null;
-let isFollowing = true; // مفتاح لتفعيل أو إيقاف ميزة التتبع
+let isFollowing = true;
 
+// 1. تسجيل وتسعير أوامر السلاش (Slash Commands)
+const commands = [
+    new SlashCommandBuilder()
+        .setName('stop')
+        .setDescription('إيقاف تتبع البوت لك وتثبيته في مكانه'),
+    new SlashCommandBuilder()
+        .setName('follow')
+        .setDescription('إعادة تفعيل التتبع التلقائي لصوتك'),
+    new SlashCommandBuilder()
+        .setName('join')
+        .setDescription('إرسال البوت إلى قناة صوتية محددة بالآي دي')
+        .addStringOption(option =>
+            option.setName('channel_id')
+                .setDescription('اكتب آي دي القناة الصوتية')
+                .setRequired(true)),
+    new SlashCommandBuilder()
+        .setName('leave')
+        .setDescription('إخراج البوت نهائياً من الفويس'),
+    new SlashCommandBuilder()
+        .setName('status')
+        .setDescription('عرض حالة البوت الحالية وتتبع الصوت')
+].map(command => command.toJSON());
+
+// دالة تسجيل الأوامر عند تشغيل البوت
+client.once('ready', async () => {
+    console.log(`Logged in as ${client.user.tag}!`);
+
+    const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
+
+    try {
+        console.log('Started refreshing application (/) commands.');
+
+        // تسجيل الأوامر على مستوى السيرفر (تظهر فوراً في السيرفر الخاص بك)
+        await rest.put(
+            Routes.applicationCommands(client.user.id),
+            { body: commands },
+        );
+
+        console.log('Successfully reloaded application (/) commands.');
+    } catch (error) {
+        console.error(error);
+    }
+});
+
+// تتبع حركتك الصوتية ودخول الفويس
 client.on('voiceStateUpdate', async (oldState, newState) => {
-    // إذا كانت ميزة التتبع متوقفة (ماتتبعنيش)، فلا تفعل شيئاً
     if (!isFollowing) return;
 
     if (newState.member.id === MY_USER_ID) {
@@ -68,7 +111,6 @@ async function connectToChannel(channelId, guild) {
             } catch (error) {
                 connection.destroy();
                 activeConnection = null;
-                // يعود فقط إذا كانت ميزة التتبع مفعلة وتوجد قناة سابقة
                 if (isFollowing && lastChannelId && lastGuildId) {
                     const targetGuild = client.guilds.cache.get(lastGuildId);
                     if (targetGuild) {
@@ -85,70 +127,60 @@ async function connectToChannel(channelId, guild) {
     }
 }
 
-// استقبال الأوامر النصية للتحكم الفوري
-client.on('messageCreate', async (message) => {
-    // السماح فقط لك أنت بالتحكم في البوت
-    if (message.author.id !== MY_USER_ID) return;
+// 2. استقبال وتنفيذ أوامر السلاش (Slash Commands Interaction)
+client.on('interactionCreate', async interaction => {
+    if (!interaction.isChatInputCommand()) return;
 
-    const args = message.content.trim().split(/ +/);
-    const command = args.shift().toLowerCase();
+    // حماية الأوامر لتكون خاصة بك وحدك
+    if (interaction.user.id !== MY_USER_ID) {
+        return interaction.reply({ content: 'عذراً، هذه الأوامر مخصصة لصاحب البوت فقط!', ephemeral: true });
+    }
 
-    // 1. أمر التوقف عن التتبع: "!ماتتبعنيش" أو "!stop"
-    if (command === '!ماتتبعنيش' || command === '!stop') {
+    const { commandName } = interaction;
+
+    if (commandName === 'stop') {
         isFollowing = false;
-        message.react('🛑');
-        message.reply('تم إيقاف التتبّع! لن أتحرك معك بعد الآن حتى أطلب مني ذلك.');
-    }
-
-    // 2. أمر استئناف التتبع: "!اتبعني" أو "!follow"
-    if (command === '!اتبعني' || command === '!follow') {
+        await interaction.reply({ content: '🛑 تم إيقاف التتبع التلقائي! لن أتحرك معك بعد الآن.', ephemeral: false });
+    } 
+    
+    else if (commandName === 'follow') {
         isFollowing = true;
-        message.react('✅');
-        message.reply('تم تفعيل التتبّع من جديد! سأتبعك أينما ذهبت.');
-    }
-
-    // 3. أمر إرسال البوت لشانل محددة بالآي دي: "!روح [Channel_ID]"
-    if (command === '!روح' || command === '!join') {
-        const targetChannelId = args[0];
-        if (!targetChannelId) {
-            return message.reply('يرجى كتابة آي دي القناة الصوتية بعد الأمر، مثال: `!روح 123456789`');
-        }
-
+        await interaction.reply({ content: '✅ تم تفعيل التتبع من جديد! سأتبعك أينما ذهبت.', ephemeral: false });
+    } 
+    
+    else if (commandName === 'join') {
+        const targetChannelId = interaction.options.getString('channel_id');
         const channel = client.channels.cache.get(targetChannelId);
+
         if (channel && channel.isVoiceBased()) {
-            isFollowing = false; // نوقف التتبع التلقائي مؤقتاً حتى يثبت في هذه الشانل
+            isFollowing = false; // تثبيت البوت وإيقاف التتبع المؤقت
             lastChannelId = channel.id;
             lastGuildId = channel.guild.id;
             await connectToChannel(channel.id, channel.guild);
-            message.react('👍');
-            message.reply(`تم الانتقال إلى القناة: **${channel.name}** وثبيتي فيها بنجاح.`);
+            await interaction.reply({ content: `👍 تم الانتقال إلى القناة **${channel.name}** وثبيتي فيها بنجاح.`, ephemeral: false });
         } else {
-            message.reply('لم يتم العثور على القناة أو أنها ليست قناة صوتية!');
+            await interaction.reply({ content: '❌ لم يتم العثور على القناة أو أنها ليست قناة صوتية صحيحة!', ephemeral: true });
         }
-    }
-
-    // 4. أمر إخراج البوت نهائياً من الفويس: "!احبس" أو "!leave"
-    if (command === '!احبس' || command === '!disconnect') {
+    } 
+    
+    else if (commandName === 'leave') {
         if (activeConnection) {
             isFollowing = false;
             activeConnection.destroy();
             activeConnection = null;
             lastChannelId = null;
-            message.react('👋');
-            message.reply('تم قطع الاتصال ومغادرة الفويس.');
+            await interaction.reply({ content: '👋 تم قطع الاتصال ومغادرة الفويس نهائياً.', ephemeral: false });
         } else {
-            message.reply('لست متصلاً بأي قناة صوتية حالياً.');
+            await interaction.reply({ content: '⚠️ البوت ليس متصلاً بأي قناة صوتية حالياً.', ephemeral: true });
         }
+    } 
+    
+    else if (commandName === 'status') {
+        await interaction.reply({
+            content: `📊 **حالة البوت:**\n- التتبع التلقائي: \`${isFollowing ? 'مفعل (يعمل)' : 'متوقف'}\`\n- متصل بالفويس: \`${activeConnection ? 'نعم' : 'لا'}\``,
+            ephemeral: true
+        });
     }
-
-    // 5. أمر حالة البوت: "!حالة" أو "!status"
-    if (command === '!حالة' || command === '!status') {
-        message.reply(`حالة البوت:\n- التتبع التلقائي: \`${isFollowing ? 'مفعل (يعمل)' : 'متوقف'}\`\n- متصل حالياً: \`${activeConnection ? 'نعم' : 'لا'}\``);
-    }
-});
-
-client.once('ready', () => {
-    console.log(`Logged in as ${client.user.tag}! Bot is ready with extra commands.`);
 });
 
 client.login(process.env.DISCORD_TOKEN);
